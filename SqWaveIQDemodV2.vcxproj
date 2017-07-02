@@ -90,7 +90,7 @@
   </ImportGroup>
   <ProjectExtensions>
     <VisualStudio>
-      <UserProperties VM_ADDITIONAL_COMPILER_CPP_FLAGS="-Wno-unknown-pragmas" />
+      <UserProperties VM_ADDITIONAL_COMPILER_CPP_FLAGS="-Wno-unknown-pragmas" arduino.upload.port="COM23" />
     </VisualStudio>
   </ProjectExtensions>
 </Project>
