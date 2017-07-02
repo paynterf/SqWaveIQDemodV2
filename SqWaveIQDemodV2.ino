@@ -126,7 +126,7 @@ void setup()
 	}
 
 	//Serial.println("GSumI\tGSumQ\tCSumI\tCSumQ\tRSI\tOldRSI\tOldRSQ\tCurRSI\tCurRQ\tNewRSI\tNewRSQ\tFinVal");
-	Serial.println("RSI\tCSumI\tCSumQ\tOldRSI\tOldRSQ\tCurRSI\tCurRQ\tNewRSI\tNewRSQ\tFinVal");
+	//Serial.println("RSI\tCSumI\tCSumQ\tOldRSI\tOldRSQ\tCurRSI\tCurRQ\tNewRSI\tNewRSQ\tFinVal");
 	//Serial.println("SI\tSamp\tGSumI\tGSumQ\tCGSumI\tCGSumQ\tOldI\tOldQ\tRSumI\tRSumQ\tFinVal");
 
 	//07/01/17 bugfix - need to init elapsedMicros variables
@@ -208,14 +208,15 @@ void loop()
 			//		   then overwrite this values with the new one
 			int oldestvalue_I = aCycleSum_I[RunningSumInsertionIndex];
 			int oldestvalue_Q = aCycleSum_Q[RunningSumInsertionIndex];
-//DEBUG!!
-			Serial.print(RunningSumInsertionIndex); Serial.print("\t");
-			Serial.print(CycleGroupSum_I); Serial.print("\t");
-			Serial.print(CycleGroupSum_Q); Serial.print("\t");
-			Serial.print(oldestvalue_I); Serial.print("\t");
-			Serial.print(oldestvalue_Q); Serial.print("\t");
-			Serial.print(RunningSum_I); Serial.print("\t");
-			Serial.print(RunningSum_Q); Serial.print("\t");
+////DEBUG!!
+//			Serial.print(RunningSumInsertionIndex); Serial.print("\t");
+//			Serial.print(CycleGroupSum_I); Serial.print("\t");
+//			Serial.print(CycleGroupSum_Q); Serial.print("\t");
+//			Serial.print(oldestvalue_I); Serial.print("\t");
+//			Serial.print(oldestvalue_Q); Serial.print("\t");
+//			Serial.print(RunningSum_I); Serial.print("\t");
+//			Serial.print(RunningSum_Q); Serial.print("\t");
+////DEBUG!!
 
 			RunningSum_I = RunningSum_I + CycleGroupSum_I - oldestvalue_I;
 			RunningSum_Q = RunningSum_Q + CycleGroupSum_Q - oldestvalue_Q;
@@ -225,10 +226,13 @@ void loop()
 			int RS_I = RunningSum_I; int RS_Q = RunningSum_Q;
 			FinalVal = abs((int)RS_I) + abs((int)RS_Q);
 
-			Serial.print(RunningSum_I); Serial.print("\t");
-			Serial.print(RunningSum_Q); Serial.print("\t");
-			Serial.print(FinalVal);
-			Serial.println();
+////DEBUG!!
+			//Serial.print(RunningSum_I); Serial.print("\t");
+			//Serial.print(RunningSum_Q); Serial.print("\t");
+
+			//Serial.print(FinalVal);
+			//Serial.println();
+////DEBUG!!
 
 			aCycleSum_I[RunningSumInsertionIndex] = CycleGroupSum_I;
 			aCycleSum_Q[RunningSumInsertionIndex] = CycleGroupSum_Q;
@@ -248,6 +252,8 @@ void loop()
 			RunningSumInsertionIndex = 0;
 			sample_count = 0; 
 			numpassess++;
+			Serial.print(FinalVal);
+			Serial.println();
 		}//if (RunningSumInsertionIndex >= RUNNING_SUM_LENGTH)
 
 		//end of timing pulse
