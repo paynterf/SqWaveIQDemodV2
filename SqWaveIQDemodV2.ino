@@ -90,6 +90,11 @@ elapsedMicros sinceLastSample;
 int SampleSumCount; //sample sums taken so far. range is 0-4
 int CycleGroupSumCount; //cycle group sums taken so far. range is 0-3
 
+//07/02/17 Sinewave output variables
+float phase = 0.0;
+float twopi = 3.14159 * 2;
+
+
 void setup()
 {
 	Serial.begin(115200);
@@ -132,6 +137,9 @@ void setup()
 	//07/01/17 bugfix - need to init elapsedMicros variables
 	sinceLastSqWvTrans = 0; //06/26/17 added for freq matching with xmit board
 	sinceLastSample = 0;
+
+	//07/02/17 for sinewave output
+	analogWriteResolution(12);
 }
 
 void loop()
@@ -261,9 +269,15 @@ void loop()
 	}//if (sinceLastSample > 95.7)
 
 	 //added 06/26/17 for frequency matching with xmit board
+	//07/02/17 rev to output sinewave on A14
 	if (sinceLastSqWvTrans > SQWV_HALF_PERIOD_US)
 	{
-		sinceLastSqWvTrans -= SQWV_HALF_PERIOD_US;
-		digitalWrite(SQWV_OUTPUT_PIN, !digitalRead(SQWV_OUTPUT_PIN)); 
+		//sinceLastSqWvTrans -= SQWV_HALF_PERIOD_US;
+		//digitalWrite(SQWV_OUTPUT_PIN, !digitalRead(SQWV_OUTPUT_PIN)); 
+		float val = sin(phase) * 2000.0 + 2050.0;
+		analogWrite(A21, (int)val);
+		phase = phase + 0.02;
+		if (phase >= twopi) phase = 0;
+
 	}
 }//loop
