@@ -60,6 +60,7 @@ const int SAMPLE_CAPTURE_LENGTH = RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE;
 const int SENSOR_PIN = A0;
 const int aMultVal_I[GROUPS_PER_CYCLE] = { 1, 1, -1, -1 };
 const int aMultVal_Q[GROUPS_PER_CYCLE] = { -1, 1, 1, -1 };
+const int FULLSCALE_FINALVAL = 273584; //07/02/17 full-scale final value --> 3.3v DAC output
 #pragma endregion Program Constants
 
 #pragma region ProgVars
@@ -260,8 +261,8 @@ void loop()
 			RunningSumInsertionIndex = 0;
 			sample_count = 0; 
 			numpassess++;
-			Serial.print(FinalVal);
-			Serial.println();
+			//Serial.print(FinalVal);
+			//Serial.println();
 		}//if (RunningSumInsertionIndex >= RUNNING_SUM_LENGTH)
 
 		//end of timing pulse
@@ -272,12 +273,8 @@ void loop()
 	//07/02/17 rev to output sinewave on A14
 	if (sinceLastSqWvTrans > SQWV_HALF_PERIOD_US)
 	{
-		//sinceLastSqWvTrans -= SQWV_HALF_PERIOD_US;
-		//digitalWrite(SQWV_OUTPUT_PIN, !digitalRead(SQWV_OUTPUT_PIN)); 
-		float val = sin(phase) * 2000.0 + 2050.0;
+		sinceLastSqWvTrans -= SQWV_HALF_PERIOD_US;
+		float val = 4096*FinalVal/FULLSCALE_FINALVAL;
 		analogWrite(A21, (int)val);
-		phase = phase + 0.02;
-		if (phase >= twopi) phase = 0;
-
 	}
 }//loop
