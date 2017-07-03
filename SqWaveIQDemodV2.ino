@@ -95,6 +95,11 @@ int CycleGroupSumCount; //cycle group sums taken so far. range is 0-3
 float phase = 0.0;
 float twopi = 3.14159 * 2;
 
+//int incomingByte = 0;
+String incomingString = "";
+//byte incomingByte = 0;
+char incomingByte = 0;
+
 
 void setup()
 {
@@ -145,6 +150,24 @@ void setup()
 
 void loop()
 {
+	if (Serial.available() > 0) 
+	{
+		//incomingString = Serial.readString();
+		incomingByte = Serial.read();
+		Serial.print("I received: "); Serial.print(incomingByte, DEC);Serial.print(", ");Serial.println(incomingByte);
+
+		//if (incomingString.length() == 3 && incomingString.indexOf('q') == 0)
+		if (incomingByte == 'q')
+		{
+			Serial.println("Exiting - Bye!");
+
+			//close SD card logging file
+			//enter infinite loop
+
+		}
+	}
+
+
 	//this runs every 95.7uSec
 	if (sinceLastSample > USEC_PER_SAMPLE)
 	{
