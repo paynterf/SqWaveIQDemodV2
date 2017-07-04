@@ -34,7 +34,9 @@
 //	step 2 is done each SAMPLES_PER_GROUP acquisition periods
 //	step 3-6 are done each SAMPLES_PER_CYCLE acquisition periods
 
-#include <ADC.h>
+#include <ADC.h> //Analog-to-Digital library
+#include <SD.h> //SD card library
+
 ADC *adc = new ADC(); // adc object;
 
 
@@ -95,10 +97,10 @@ int CycleGroupSumCount; //cycle group sums taken so far. range is 0-3
 float phase = 0.0;
 float twopi = 3.14159 * 2;
 
-//int incomingByte = 0;
-String incomingString = "";
-//byte incomingByte = 0;
-char incomingByte = 0;
+char incomingByte = 0; //used for incoming command chars via serial port
+File myFile; //used for SD card I/O
+const int chipSelect = BUILTIN_SDCARD;
+
 
 
 void setup()
@@ -146,17 +148,69 @@ void setup()
 
 	//07/02/17 for sinewave output
 	analogWriteResolution(12);
+
+//DEBUG!! ----------------  Micro-SD Logging ---------------------------
+
+	Serial.print("Initializing SD card...");
+
+	if (!SD.begin(chipSelect)) {
+		Serial.println("initialization failed!");
+		return;
+	}
+	Serial.println("initialization done.");
+
+	// open the file. note that only one file can be open at a time,
+	// so you have to close this one before opening another.
+	myFile = SD.open("test.txt", FILE_WRITE);
+
+	// if the file opened okay, write to it:
+	if (myFile) 
+	{
+		Serial.print("Writing to test.txt...");
+		long startUsec = micros();
+		for (size_t i = 0; i < 1000; i++)
+		{
+			myFile.println("testing 1, 2, 3.");
+		}
+		// close the file:
+		myFile.close();
+		long endUsec = micros();
+		Serial.print("done. Time req for 1000 writes was "); 
+		Serial.print(endUsec - startUsec);
+		Serial.println(" Usec");
+	}
+	else {
+		// if the file didn't open, print an error:
+		Serial.println("error opening test.txt");
+	}
+
+	// re-open the file for reading:
+	myFile = SD.open("test.txt");
+	if (myFile) {
+		Serial.println("test.txt:");
+
+		// read from the file until there's nothing else in it:
+		while (myFile.available()) {
+			Serial.write(myFile.read());
+		}
+		// close the file:
+		myFile.close();
+	}
+	else {
+		// if the file didn't open, print an error:
+		Serial.println("error opening test.txt");
+	}
+//DEBUG!! ----------------  Micro-SD Logging ---------------------------
+
 }
 
 void loop()
 {
 	if (Serial.available() > 0) 
 	{
-		//incomingString = Serial.readString();
 		incomingByte = Serial.read();
 		Serial.print("I received: "); Serial.print(incomingByte, DEC);Serial.print(", ");Serial.println(incomingByte);
 
-		//if (incomingString.length() == 3 && incomingString.indexOf('q') == 0)
 		if (incomingByte == 'q')
 		{
 			Serial.println("Exiting - Bye!");
