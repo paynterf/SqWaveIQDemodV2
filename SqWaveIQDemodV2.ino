@@ -83,7 +83,7 @@ int aRawData[SAMPLE_CAPTURE_LENGTH];//12800 elements
 int aSampleGroupSums_I[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements 
 int aSampleGroupSums_Q[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements
 int sample_count = 0; //this counts from 0 to 1279
-int numpassess = 0;
+int cycle_count = 0;
 elapsedMicros sinceLastSqWvTrans = 0; //06/26/17 added for freq matching with xmit board
 int num_sample_pulses = 0; //used for square-wave generation
 
@@ -99,8 +99,15 @@ float phase = 0.0;
 float twopi = 3.14159 * 2;
 
 char incomingByte = 0; //used for incoming command chars via serial port
-File myFile; //used for SD card I/O
-const int chipSelect = BUILTIN_SDCARD;
+//File myFile; //used for SD card I/O
+//const int chipSelect = BUILTIN_SDCARD;
+
+//const int SAMPTIMES_CAPTURE_LENGTH = 10000;
+const int SAMPTIMES_CAPTURE_LENGTH = 2560;
+const int FINVAL_CAPTURE_LENGTH = 1 + (SAMPTIMES_CAPTURE_LENGTH / SAMPLES_PER_CYCLE);//'+1' makes sure there's enough room
+float aSampTimes[SAMPTIMES_CAPTURE_LENGTH]; //debugging array
+float aFinalVals[FINVAL_CAPTURE_LENGTH]; //debugging array
+
 
 
 
@@ -207,6 +214,27 @@ void setup()
 //	}
 ////DEBUG!! ----------------  Micro-SD Logging ---------------------------
 
+////DEBUG!! ----------------  sinceLastSample Logging Array Init ---------------------------
+	long startinit = micros();
+	for (size_t i = 0; i < SAMPTIMES_CAPTURE_LENGTH; i++)
+	{
+		aSampTimes[i] = 0;
+	}
+	long endinit = micros();
+	Serial.print(SAMPTIMES_CAPTURE_LENGTH);Serial.print("-point aSampleTimes array init took "); 
+	Serial.print(endinit - startinit); Serial.println(" uS");
+
+	startinit = micros();
+	for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
+	{
+		aFinalVals[i] = 0;
+	}
+	endinit = micros();
+	Serial.print(FINVAL_CAPTURE_LENGTH);Serial.print("-point aFinalVals array init took ");
+	Serial.print(endinit - startinit); Serial.println(" uS");
+
+////DEBUG!! ----------------  sinceLastSample Logging Array Init ---------------------------
+
 }
 
 void loop()
@@ -230,8 +258,36 @@ void loop()
 	//this runs every 95.7uSec
 	if (sinceLastSample > USEC_PER_SAMPLE)
 	{
-		/*RECORD sinceLastSample HERE!*/
+//DEBUG!!
 
+		aSampTimes[sample_count] = sinceLastSample;
+		if (sample_count > SAMPTIMES_CAPTURE_LENGTH-1)
+		{
+			Serial.print("Sample times capture length exceeded.  Print y/n (y)? ");
+			while (Serial.available() == 0); //waits for input
+			String res = Serial.readString();
+			Serial.println(res.substring(0));
+			res.trim();
+			if (!res.equalsIgnoreCase('N'))
+			{
+				Serial.println("Elapsed Usec between samples");
+				for (size_t i = 0; i < SAMPTIMES_CAPTURE_LENGTH; i++)
+				{
+					Serial.println(aSampTimes[i]);
+				}
+
+				Serial.println("Final Values");
+				for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
+				{
+					Serial.println(aFinalVals[i]);
+				}
+			}
+
+			Serial.println("Exiting - Bye!");
+			while (1);
+		}
+		sample_count++;
+//DEBUG!!
 		//sinceLastSample = 0;
 		sinceLastSample -= USEC_PER_SAMPLE;
 
@@ -243,7 +299,7 @@ void loop()
 		int samp = adc->analogRead(SENSOR_PIN);
 		SampleSum += samp;
 		SampleSumCount++; //goes from 0 to SAMPLES_PER_GROUP-1
-		sample_count++; //checked in step 6 to see if data capture is complete
+		//sample_count++; //checked in step 6 to see if data capture is complete
 
 ////DEBUG!!
 //		Serial.print(sample_count); Serial.print("\t"); Serial.print(samp);
@@ -320,6 +376,8 @@ void loop()
 			FinalVal = abs((int)RS_I) + abs((int)RS_Q);
 
 ////DEBUG!!
+			aFinalVals[cycle_count] = FinalVal;
+			cycle_count++;
 			//Serial.print(RunningSum_I); Serial.print("\t");
 			//Serial.print(RunningSum_Q); Serial.print("\t");
 
@@ -343,8 +401,7 @@ void loop()
 		if (RunningSumInsertionIndex >= RUNNING_SUM_LENGTH)
 		{
 			RunningSumInsertionIndex = 0;
-			sample_count = 0; 
-			numpassess++;
+			//sample_count = 0; 
 			//Serial.print(FinalVal);
 			//Serial.println();
 		}//if (RunningSumInsertionIndex >= RUNNING_SUM_LENGTH)
