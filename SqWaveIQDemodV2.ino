@@ -33,6 +33,7 @@
 //	step 1 is done each acquisition period
 //	step 2 is done each SAMPLES_PER_GROUP acquisition periods
 //	step 3-6 are done each SAMPLES_PER_CYCLE acquisition periods
+//07/11/17 rev to synch with sweep generator module
 
 #include <ADC.h> //Analog-to-Digital library
 #include <SD.h> //SD card library
@@ -44,6 +45,11 @@ ADC *adc = new ADC(); // adc object;
 const int OUTPUT_PIN = 32; //lower left pin
 const int SQWV_OUTPUT_PIN = 31; //next to bottom pin, left side
 const int IRDET1_PIN = A0; //aka pin 14
+const int DAC_PIN = A21; //DAC0 added 07/11/17
+
+//07/11/17 added sweep gen synch pins
+const int DEMOD_SYNCH_IN_PIN = 1;
+const int DEMOD_SYNCH_OUT_PIN = 2;
 
 //06/26/17 added for freq matching with xmit board
 //const double SQWAVE_FREQ_HZ = 518.5; //stopped!!!
@@ -58,11 +64,12 @@ const int SAMPLES_PER_GROUP = SAMPLES_PER_CYCLE / GROUPS_PER_CYCLE;
 //const float USEC_PER_SAMPLE = 95.7; //value that most nearly zeroes beat-note
 const float USEC_PER_SAMPLE = SQWV_PERIOD_US / SAMPLES_PER_CYCLE; //sample period, Usec
 const int RUNNING_SUM_LENGTH = 64;
-const int SAMPLE_CAPTURE_LENGTH = RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE;
+//const int SAMPLE_CAPTURE_LENGTH = RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE;
 const int SENSOR_PIN = A0;
 const int aMultVal_I[GROUPS_PER_CYCLE] = { 1, 1, -1, -1 };
 const int aMultVal_Q[GROUPS_PER_CYCLE] = { -1, 1, 1, -1 };
-const int FULLSCALE_FINALVAL = 273584; //07/02/17 full-scale final value --> 3.3v DAC output
+const int FULLSCALE_FINALVAL_COUNT = 2621440; //07/02/17 full-scale final value --> 3.3v DAC output
+const float FULLSCALE_DAC_COUNT = 4096; //07/02/17 full-scale final value --> 3.3v DAC output
 #pragma endregion Program Constants
 
 #pragma region ProgVars
@@ -79,13 +86,14 @@ int FinalVal = 0;//final value = abs(I)+abs(Q) for each channel
 
 //debugging variables
 //int aRawData[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 elements per sensor
-int aRawData[SAMPLE_CAPTURE_LENGTH];//12800 elements
+//int aRawData[SAMPLE_CAPTURE_LENGTH];//12800 elements
 int aSampleGroupSums_I[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements 
 int aSampleGroupSums_Q[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements
 int sample_count = 0; //this counts from 0 to 1279
-int cycle_count = 0;
+int finvalidx = 0;
 elapsedMicros sinceLastSqWvTrans = 0; //06/26/17 added for freq matching with xmit board
 int num_sample_pulses = 0; //used for square-wave generation
+bool bDoneRecordingFinVals = false;
 
 
 #pragma endregion Program Variables
@@ -102,10 +110,11 @@ char incomingByte = 0; //used for incoming command chars via serial port
 //File myFile; //used for SD card I/O
 //const int chipSelect = BUILTIN_SDCARD;
 
-//const int SAMPTIMES_CAPTURE_LENGTH = 10000;
-const int SAMPTIMES_CAPTURE_LENGTH = 2560;
-const int FINVAL_CAPTURE_LENGTH = 1 + (SAMPTIMES_CAPTURE_LENGTH / SAMPLES_PER_CYCLE);//'+1' makes sure there's enough room
-float aSampTimes[SAMPTIMES_CAPTURE_LENGTH]; //debugging array
+//const int SAMPTIMES_CAPTURE_LENGTH = 20000;
+//const int SAMPTIMES_CAPTURE_LENGTH = 2560;
+//const int FINVAL_CAPTURE_LENGTH = 1 + (SAMPTIMES_CAPTURE_LENGTH / SAMPLES_PER_CYCLE);//'+1' makes sure there's enough room
+const int FINVAL_CAPTURE_LENGTH = 3000; //rev 07/12/17
+//float aSampTimes[SAMPTIMES_CAPTURE_LENGTH]; //debugging array
 float aFinalVals[FINVAL_CAPTURE_LENGTH]; //debugging array
 
 
@@ -118,6 +127,12 @@ void setup()
 	pinMode(SQWV_OUTPUT_PIN, OUTPUT); //added 06/26/17 for frequency matching with xmit board
 	pinMode(IRDET1_PIN, INPUT);
 	digitalWrite(OUTPUT_PIN, LOW);
+
+	//07/11/17 added sweep gen synch pins
+	pinMode(DEMOD_SYNCH_IN_PIN, INPUT_PULLDOWN);
+	pinMode(DEMOD_SYNCH_OUT_PIN, OUTPUT);
+	digitalWrite(DEMOD_SYNCH_OUT_PIN, LOW);
+	pinMode(DAC_PIN, OUTPUT); //analog output pin
 
 //DEBUG!!
 	Serial.print("USEC_PER_SAMPLE = "); Serial.println(USEC_PER_SAMPLE);
@@ -144,11 +159,11 @@ void setup()
 		aSampleGroupSums_Q[k] = 0;
 	}
 
-	//init sample capture array
-	for (int i = 0; i < SAMPLE_CAPTURE_LENGTH; i++)
-	{
-		aRawData[i] = 0;
-	}
+	////init sample capture array
+	//for (int i = 0; i < SAMPLE_CAPTURE_LENGTH; i++)
+	//{
+	//	aRawData[i] = 0;
+	//}
 
 	//Serial.println("GSumI\tGSumQ\tCSumI\tCSumQ\tRSI\tOldRSI\tOldRSQ\tCurRSI\tCurRQ\tNewRSI\tNewRSQ\tFinVal");
 	//Serial.println("RSI\tCSumI\tCSumQ\tOldRSI\tOldRSQ\tCurRSI\tCurRQ\tNewRSI\tNewRSQ\tFinVal");
@@ -160,6 +175,7 @@ void setup()
 
 	//07/02/17 for sinewave output
 	analogWriteResolution(12);
+	analogReference(0); //default - 3.3VDC
 
 ////DEBUG!! ----------------  Micro-SD Logging ---------------------------
 //
@@ -215,21 +231,21 @@ void setup()
 ////DEBUG!! ----------------  Micro-SD Logging ---------------------------
 
 ////DEBUG!! ----------------  sinceLastSample Logging Array Init ---------------------------
-	long startinit = micros();
-	for (size_t i = 0; i < SAMPTIMES_CAPTURE_LENGTH; i++)
-	{
-		aSampTimes[i] = 0;
-	}
-	long endinit = micros();
-	Serial.print(SAMPTIMES_CAPTURE_LENGTH);Serial.print("-point aSampleTimes array init took "); 
-	Serial.print(endinit - startinit); Serial.println(" uS");
+	//long startinit = micros();
+	//for (size_t i = 0; i < SAMPTIMES_CAPTURE_LENGTH; i++)
+	//{
+	//	aSampTimes[i] = 0;
+	//}
+	//long endinit = micros();
+	//Serial.print(SAMPTIMES_CAPTURE_LENGTH);Serial.print("-point aSampleTimes array init took "); 
+	//Serial.print(endinit - startinit); Serial.println(" uS");
 
-	startinit = micros();
+	long startinit = micros();
 	for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
 	{
 		aFinalVals[i] = 0;
 	}
-	endinit = micros();
+	long endinit = micros();
 	Serial.print(FINVAL_CAPTURE_LENGTH);Serial.print("-point aFinalVals array init took ");
 	Serial.print(endinit - startinit); Serial.println(" uS");
 
@@ -260,33 +276,33 @@ void loop()
 	{
 //DEBUG!!
 
-		aSampTimes[sample_count] = sinceLastSample;
-		if (sample_count > SAMPTIMES_CAPTURE_LENGTH-1)
-		{
-			Serial.print("Sample times capture length exceeded.  Print y/n (y)? ");
-			while (Serial.available() == 0); //waits for input
-			String res = Serial.readString();
-			Serial.println(res.substring(0));
-			res.trim();
-			if (!res.equalsIgnoreCase('N'))
-			{
-				Serial.println("Elapsed Usec between samples");
-				for (size_t i = 0; i < SAMPTIMES_CAPTURE_LENGTH; i++)
-				{
-					Serial.println(aSampTimes[i]);
-				}
+		//aSampTimes[sample_count] = sinceLastSample;
+		//if (sample_count > SAMPTIMES_CAPTURE_LENGTH-1)
+		//{
+		//	Serial.print("Sample times capture length exceeded.  Print y/n (y)? ");
+		//	while (Serial.available() == 0); //waits for input
+		//	String res = Serial.readString();
+		//	Serial.println(res.substring(0));
+		//	res.trim();
+		//	if (!res.equalsIgnoreCase('N'))
+		//	{
+		//		Serial.println("Elapsed Usec between samples");
+		//		for (size_t i = 0; i < SAMPTIMES_CAPTURE_LENGTH; i++)
+		//		{
+		//			Serial.println(aSampTimes[i]);
+		//		}
 
-				Serial.println("Final Values");
-				for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
-				{
-					Serial.println(aFinalVals[i]);
-				}
-			}
+		//		Serial.println("Final Values");
+		//		for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
+		//		{
+		//			Serial.println(aFinalVals[i]);
+		//		}
+		//	}
 
-			Serial.println("Exiting - Bye!");
-			while (1);
-		}
-		sample_count++;
+		//	Serial.println("Exiting - Bye!");
+		//	while (1);
+		//}
+		//sample_count++;
 //DEBUG!!
 		//sinceLastSample = 0;
 		sinceLastSample -= USEC_PER_SAMPLE;
@@ -376,8 +392,56 @@ void loop()
 			FinalVal = abs((int)RS_I) + abs((int)RS_Q);
 
 ////DEBUG!!
-			aFinalVals[cycle_count] = FinalVal;
-			cycle_count++;
+			////07/11/17 rev to synch with sweepgen
+			//if (digitalRead(DEMOD_SYNCH_IN_PIN) == HIGH && !bDoneRecordingFinVals)
+			//{
+			//	if (finvalidx == 0)
+			//	{
+			//		Serial.println("Finval Recording Started");
+			//		//Serial.print("Cycle\tFinval");
+			//		digitalWrite(DEMOD_SYNCH_OUT_PIN, HIGH); //handshake with sweepgen
+			//	}
+
+				//if (finvalidx < FINVAL_CAPTURE_LENGTH)
+				//{
+				//	aFinalVals[finvalidx] = FinalVal;
+				//	finvalidx++;
+					float FinalValAnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal / (float)FULLSCALE_FINALVAL_COUNT);
+					//Serial.print(finvalidx);Serial.print(": FinalValAnalogOut = "); Serial.println((int)FinalValAnalogOut);
+					//Serial.print(finvalidx);Serial.print("\t"); Serial.println((int)FinalValAnalogOut);
+					//Serial.print(finvalidx);Serial.print("\t"); 
+					//Serial.print(FinalVal);Serial.print("\t"); 
+					//Serial.println((int)FinalValAnalogOut);
+					analogWrite(DAC_PIN, (int)FinalValAnalogOut); //added 07/11/17
+				//}
+				//else
+				//{
+				//	digitalWrite(DEMOD_SYNCH_OUT_PIN, LOW); //handshake with sweepgen
+				//	finvalidx = 0;
+				//	bDoneRecordingFinVals = true;
+				//	Serial.print("Finval Recording Stopped.  Print y/n (y)? ");
+
+				//	//wait for input
+				//	while (Serial.available() == 0)
+				//	{
+				//		Serial.println("Waiting for input...");
+				//		delay(1000);
+				//	}
+				//	String res = Serial.readString();
+				//	Serial.println(res.substring(0));
+				//	res.trim();
+				//	if (!res.equalsIgnoreCase('N'))
+				//	{
+				//		Serial.println("Final Values");
+				//		for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
+				//		{
+				//			Serial.println(aFinalVals[i]);
+				//		}
+				//	}
+				//	Serial.println("Exiting - Bye!!");
+				//}
+		
+			//}
 			//Serial.print(RunningSum_I); Serial.print("\t");
 			//Serial.print(RunningSum_Q); Serial.print("\t");
 
