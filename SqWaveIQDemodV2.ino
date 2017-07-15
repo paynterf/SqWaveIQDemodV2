@@ -34,9 +34,10 @@
 //	step 2 is done each SAMPLES_PER_GROUP acquisition periods
 //	step 3-6 are done each SAMPLES_PER_CYCLE acquisition periods
 //07/11/17 rev to synch with sweep generator module
+//07/12/17 rev to go back to free-run mode - no printouts, no data capture, analog output
 
 #include <ADC.h> //Analog-to-Digital library
-#include <SD.h> //SD card library
+//#include <SD.h> //SD card library
 
 ADC *adc = new ADC(); // adc object;
 
@@ -51,20 +52,23 @@ const int DAC_PIN = A21; //DAC0 added 07/11/17
 const int DEMOD_SYNCH_IN_PIN = 1;
 const int DEMOD_SYNCH_OUT_PIN = 2;
 
+//const int FINVAL_CAPTURE_LENGTH = 3000; //rev 07/12/17
+const int FINVAL_CAPTURE_LENGTH = 12000; //rev 07/12/17
+float aFinalVals[FINVAL_CAPTURE_LENGTH]; //debugging array
+
 //06/26/17 added for freq matching with xmit board
 //const double SQWAVE_FREQ_HZ = 518.5; //stopped!!!
 const double SQWAVE_FREQ_HZ = 51.85; //stopped!!! 07/04/17 rev for debug
 //const double SQWV_HALF_PERIOD_US = 500000 / SQWAVE_FREQ_HZ; //half-period in Usec
 const double SQWV_PERIOD_US = 1000000 / SQWAVE_FREQ_HZ; //period in Usec
 
-//const int USEC_PER_SAMPLE = 1E6 / (SQWAVE_FREQ_HZ * SAMPLES_PER_CYCLE);
 const int SAMPLES_PER_CYCLE = 20;
 const int GROUPS_PER_CYCLE = 4; 
 const int SAMPLES_PER_GROUP = SAMPLES_PER_CYCLE / GROUPS_PER_CYCLE;
 //const float USEC_PER_SAMPLE = 95.7; //value that most nearly zeroes beat-note
 const float USEC_PER_SAMPLE = SQWV_PERIOD_US / SAMPLES_PER_CYCLE; //sample period, Usec
-const int RUNNING_SUM_LENGTH = 64;
-//const int SAMPLE_CAPTURE_LENGTH = RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE;
+//const int RUNNING_SUM_LENGTH = 64;
+const int RUNNING_SUM_LENGTH = 32; //07/15/17
 const int SENSOR_PIN = A0;
 const int aMultVal_I[GROUPS_PER_CYCLE] = { 1, 1, -1, -1 };
 const int aMultVal_Q[GROUPS_PER_CYCLE] = { -1, 1, 1, -1 };
@@ -85,14 +89,12 @@ int FinalVal = 0;//final value = abs(I)+abs(Q) for each channel
 
 
 //debugging variables
-//int aRawData[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 elements per sensor
-//int aRawData[SAMPLE_CAPTURE_LENGTH];//12800 elements
-int aSampleGroupSums_I[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements 
-int aSampleGroupSums_Q[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements
-int sample_count = 0; //this counts from 0 to 1279
+//int aSampleGroupSums_I[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements 
+//int aSampleGroupSums_Q[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements
+//int sample_count = 0; //this counts from 0 to 1279
 int finvalidx = 0;
-elapsedMicros sinceLastSqWvTrans = 0; //06/26/17 added for freq matching with xmit board
-int num_sample_pulses = 0; //used for square-wave generation
+//elapsedMicros sinceLastSqWvTrans = 0; //06/26/17 added for freq matching with xmit board
+//int num_sample_pulses = 0; //used for square-wave generation
 bool bDoneRecordingFinVals = false;
 
 
@@ -101,23 +103,6 @@ bool bDoneRecordingFinVals = false;
 elapsedMicros sinceLastSample;
 int SampleSumCount; //sample sums taken so far. range is 0-4
 int CycleGroupSumCount; //cycle group sums taken so far. range is 0-3
-
-//07/02/17 Sinewave output variables
-float phase = 0.0;
-float twopi = 3.14159 * 2;
-
-char incomingByte = 0; //used for incoming command chars via serial port
-//File myFile; //used for SD card I/O
-//const int chipSelect = BUILTIN_SDCARD;
-
-//const int SAMPTIMES_CAPTURE_LENGTH = 20000;
-//const int SAMPTIMES_CAPTURE_LENGTH = 2560;
-//const int FINVAL_CAPTURE_LENGTH = 1 + (SAMPTIMES_CAPTURE_LENGTH / SAMPLES_PER_CYCLE);//'+1' makes sure there's enough room
-const int FINVAL_CAPTURE_LENGTH = 3000; //rev 07/12/17
-//float aSampTimes[SAMPTIMES_CAPTURE_LENGTH]; //debugging array
-float aFinalVals[FINVAL_CAPTURE_LENGTH]; //debugging array
-
-
 
 
 void setup()
@@ -132,6 +117,7 @@ void setup()
 	pinMode(DEMOD_SYNCH_IN_PIN, INPUT_PULLDOWN);
 	pinMode(DEMOD_SYNCH_OUT_PIN, OUTPUT);
 	digitalWrite(DEMOD_SYNCH_OUT_PIN, LOW);
+
 	pinMode(DAC_PIN, OUTPUT); //analog output pin
 
 //DEBUG!!
@@ -152,125 +138,16 @@ void setup()
 		aCycleSum_Q[m] = 0;
 	}
 
-	//init debugging arrays
-	for (int k = 0; k < RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE; k++)
-	{
-		aSampleGroupSums_I[k] = 0;
-		aSampleGroupSums_Q[k] = 0;
-	}
-
-	////init sample capture array
-	//for (int i = 0; i < SAMPLE_CAPTURE_LENGTH; i++)
-	//{
-	//	aRawData[i] = 0;
-	//}
-
-	//Serial.println("GSumI\tGSumQ\tCSumI\tCSumQ\tRSI\tOldRSI\tOldRSQ\tCurRSI\tCurRQ\tNewRSI\tNewRSQ\tFinVal");
-	//Serial.println("RSI\tCSumI\tCSumQ\tOldRSI\tOldRSQ\tCurRSI\tCurRQ\tNewRSI\tNewRSQ\tFinVal");
-	//Serial.println("SI\tSamp\tGSumI\tGSumQ\tCGSumI\tCGSumQ\tOldI\tOldQ\tRSumI\tRSumQ\tFinVal");
-
-	//07/01/17 bugfix - need to init elapsedMicros variables
-	sinceLastSqWvTrans = 0; //06/26/17 added for freq matching with xmit board
 	sinceLastSample = 0;
 
-	//07/02/17 for sinewave output
+	//07/02/17 for final value analog output
 	analogWriteResolution(12);
 	analogReference(0); //default - 3.3VDC
-
-////DEBUG!! ----------------  Micro-SD Logging ---------------------------
-//
-//	Serial.print("Initializing SD card...");
-//
-//	if (!SD.begin(chipSelect)) {
-//		Serial.println("initialization failed!");
-//		return;
-//	}
-//	Serial.println("initialization done.");
-//
-//	// open the file. note that only one file can be open at a time,
-//	// so you have to close this one before opening another.
-//	myFile = SD.open("test.txt", FILE_WRITE);
-//
-//	// if the file opened okay, write to it:
-//	if (myFile) 
-//	{
-//		Serial.print("Writing to test.txt...");
-//		long startUsec = micros();
-//		for (size_t i = 0; i < 1000; i++)
-//		{
-//			myFile.println("testing 1, 2, 3.");
-//		}
-//		// close the file:
-//		myFile.close();
-//		long endUsec = micros();
-//		Serial.print("done. Time req for 1000 writes was "); 
-//		Serial.print(endUsec - startUsec);
-//		Serial.println(" Usec");
-//	}
-//	else {
-//		// if the file didn't open, print an error:
-//		Serial.println("error opening test.txt");
-//	}
-//
-//	// re-open the file for reading:
-//	myFile = SD.open("test.txt");
-//	if (myFile) {
-//		Serial.println("test.txt:");
-//
-//		// read from the file until there's nothing else in it:
-//		while (myFile.available()) {
-//			Serial.write(myFile.read());
-//		}
-//		// close the file:
-//		myFile.close();
-//	}
-//	else {
-//		// if the file didn't open, print an error:
-//		Serial.println("error opening test.txt");
-//	}
-////DEBUG!! ----------------  Micro-SD Logging ---------------------------
-
-////DEBUG!! ----------------  sinceLastSample Logging Array Init ---------------------------
-	//long startinit = micros();
-	//for (size_t i = 0; i < SAMPTIMES_CAPTURE_LENGTH; i++)
-	//{
-	//	aSampTimes[i] = 0;
-	//}
-	//long endinit = micros();
-	//Serial.print(SAMPTIMES_CAPTURE_LENGTH);Serial.print("-point aSampleTimes array init took "); 
-	//Serial.print(endinit - startinit); Serial.println(" uS");
-
-	long startinit = micros();
-	for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
-	{
-		aFinalVals[i] = 0;
-	}
-	long endinit = micros();
-	Serial.print(FINVAL_CAPTURE_LENGTH);Serial.print("-point aFinalVals array init took ");
-	Serial.print(endinit - startinit); Serial.println(" uS");
-
-////DEBUG!! ----------------  sinceLastSample Logging Array Init ---------------------------
 
 }
 
 void loop()
 {
-	if (Serial.available() > 0) 
-	{
-		incomingByte = Serial.read();
-		Serial.print("I received: "); Serial.print(incomingByte, DEC);Serial.print(", ");Serial.println(incomingByte);
-
-		if (incomingByte == 'q')
-		{
-			Serial.println("Exiting - Bye!");
-
-			//close SD card logging file
-			//enter infinite loop
-
-		}
-	}
-
-
 	//this runs every 95.7uSec
 	if (sinceLastSample > USEC_PER_SAMPLE)
 	{
@@ -392,20 +269,20 @@ void loop()
 			FinalVal = abs((int)RS_I) + abs((int)RS_Q);
 
 ////DEBUG!!
-			////07/11/17 rev to synch with sweepgen
-			//if (digitalRead(DEMOD_SYNCH_IN_PIN) == HIGH && !bDoneRecordingFinVals)
-			//{
-			//	if (finvalidx == 0)
-			//	{
-			//		Serial.println("Finval Recording Started");
-			//		//Serial.print("Cycle\tFinval");
-			//		digitalWrite(DEMOD_SYNCH_OUT_PIN, HIGH); //handshake with sweepgen
-			//	}
+			//07/11/17 rev to synch with sweepgen
+			if (digitalRead(DEMOD_SYNCH_IN_PIN) == HIGH && !bDoneRecordingFinVals)
+			{
+				if (finvalidx == 0)
+				{
+					Serial.println("Finval Recording Started");
+					//Serial.print("Cycle\tFinval");
+					digitalWrite(DEMOD_SYNCH_OUT_PIN, HIGH); //handshake with sweepgen
+				}
 
-				//if (finvalidx < FINVAL_CAPTURE_LENGTH)
-				//{
-				//	aFinalVals[finvalidx] = FinalVal;
-				//	finvalidx++;
+				if (finvalidx < FINVAL_CAPTURE_LENGTH)
+				{
+					aFinalVals[finvalidx] = FinalVal;
+					finvalidx++;
 					float FinalValAnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal / (float)FULLSCALE_FINALVAL_COUNT);
 					//Serial.print(finvalidx);Serial.print(": FinalValAnalogOut = "); Serial.println((int)FinalValAnalogOut);
 					//Serial.print(finvalidx);Serial.print("\t"); Serial.println((int)FinalValAnalogOut);
@@ -413,35 +290,35 @@ void loop()
 					//Serial.print(FinalVal);Serial.print("\t"); 
 					//Serial.println((int)FinalValAnalogOut);
 					analogWrite(DAC_PIN, (int)FinalValAnalogOut); //added 07/11/17
-				//}
-				//else
-				//{
-				//	digitalWrite(DEMOD_SYNCH_OUT_PIN, LOW); //handshake with sweepgen
-				//	finvalidx = 0;
-				//	bDoneRecordingFinVals = true;
-				//	Serial.print("Finval Recording Stopped.  Print y/n (y)? ");
+				}
+				else
+				{
+					digitalWrite(DEMOD_SYNCH_OUT_PIN, LOW); //handshake with sweepgen
+					finvalidx = 0;
+					bDoneRecordingFinVals = true;
+					Serial.print("Finval Recording Stopped.  Print y/n (y)? ");
 
-				//	//wait for input
-				//	while (Serial.available() == 0)
-				//	{
-				//		Serial.println("Waiting for input...");
-				//		delay(1000);
-				//	}
-				//	String res = Serial.readString();
-				//	Serial.println(res.substring(0));
-				//	res.trim();
-				//	if (!res.equalsIgnoreCase('N'))
-				//	{
-				//		Serial.println("Final Values");
-				//		for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
-				//		{
-				//			Serial.println(aFinalVals[i]);
-				//		}
-				//	}
-				//	Serial.println("Exiting - Bye!!");
-				//}
+					//wait for input
+					while (Serial.available() == 0)
+					{
+						Serial.println("Waiting for input...");
+						delay(1000);
+					}
+					String res = Serial.readString();
+					Serial.println(res.substring(0));
+					res.trim();
+					if (!res.equalsIgnoreCase('N'))
+					{
+						Serial.println("Final Values");
+						for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
+						{
+							Serial.println(aFinalVals[i]);
+						}
+					}
+					Serial.println("Exiting - Bye!!");
+				}
 		
-			//}
+			}
 			//Serial.print(RunningSum_I); Serial.print("\t");
 			//Serial.print(RunningSum_Q); Serial.print("\t");
 
@@ -469,33 +346,5 @@ void loop()
 			//Serial.print(FinalVal);
 			//Serial.println();
 		}//if (RunningSumInsertionIndex >= RUNNING_SUM_LENGTH)
-
-		num_sample_pulses++; //used for square-wave generation
-
-		if (num_sample_pulses == SAMPLES_PER_CYCLE/2)
-		{
-			digitalWrite(SQWV_OUTPUT_PIN, !digitalRead(SQWV_OUTPUT_PIN));
-			num_sample_pulses = 0;
-		}
-
-		//end of timing pulse
-		digitalWrite(OUTPUT_PIN, LOW);
-
 	}//if (sinceLastSample > 95.7)
-
-	 //added 06/26/17 for frequency matching with xmit board
-	//07/02/17 rev to output sinewave on A14
-	//if (sinceLastSqWvTrans > SQWV_HALF_PERIOD_US)
-	//{
-	//	sinceLastSqWvTrans -= SQWV_HALF_PERIOD_US;
-	//	float val = 4096*FinalVal/FULLSCALE_FINALVAL;
-	//	analogWrite(A21, (int)val);
-	//}
-	//if (sinceLastSqWvTrans > USEC_PER_SAMPLE*10)
-	//{
-	//	sinceLastSqWvTrans -= USEC_PER_SAMPLE * 10;
-	//	digitalWrite(SQWV_OUTPUT_PIN, !digitalRead(SQWV_OUTPUT_PIN));
-	//	//float val = 4096*FinalVal/FULLSCALE_FINALVAL;
-	//	//analogWrite(A21, (int)val);
-	//}
 }//loop
