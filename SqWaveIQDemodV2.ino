@@ -52,23 +52,18 @@ const int DAC_PIN = A21; //DAC0 added 07/11/17
 const int DEMOD_SYNCH_IN_PIN = 1;
 const int DEMOD_SYNCH_OUT_PIN = 2;
 
-//const int FINVAL_CAPTURE_LENGTH = 3000; //rev 07/12/17
-const int FINVAL_CAPTURE_LENGTH = 12000; //rev 07/12/17
-float aFinalVals[FINVAL_CAPTURE_LENGTH]; //debugging array
-
 //06/26/17 added for freq matching with xmit board
-//const double SQWAVE_FREQ_HZ = 518.5; //stopped!!!
-const double SQWAVE_FREQ_HZ = 51.85; //stopped!!! 07/04/17 rev for debug
+const double SQWAVE_FREQ_HZ = 518.5; //stopped!!!
+//const double SQWAVE_FREQ_HZ = 51.85; //stopped!!! 07/04/17 rev for debug
 //const double SQWV_HALF_PERIOD_US = 500000 / SQWAVE_FREQ_HZ; //half-period in Usec
 const double SQWV_PERIOD_US = 1000000 / SQWAVE_FREQ_HZ; //period in Usec
 
 const int SAMPLES_PER_CYCLE = 20;
 const int GROUPS_PER_CYCLE = 4; 
 const int SAMPLES_PER_GROUP = SAMPLES_PER_CYCLE / GROUPS_PER_CYCLE;
-//const float USEC_PER_SAMPLE = 95.7; //value that most nearly zeroes beat-note
 const float USEC_PER_SAMPLE = SQWV_PERIOD_US / SAMPLES_PER_CYCLE; //sample period, Usec
-//const int RUNNING_SUM_LENGTH = 64;
-const int RUNNING_SUM_LENGTH = 32; //07/15/17
+const int RUNNING_SUM_LENGTH = 64;
+//const int RUNNING_SUM_LENGTH = 32; //07/15/17
 const int SENSOR_PIN = A0;
 const int aMultVal_I[GROUPS_PER_CYCLE] = { 1, 1, -1, -1 };
 const int aMultVal_Q[GROUPS_PER_CYCLE] = { -1, 1, 1, -1 };
@@ -89,12 +84,23 @@ int FinalVal = 0;//final value = abs(I)+abs(Q) for each channel
 
 
 //debugging variables
+
+//const int FINVAL_CAPTURE_LENGTH = 6000; //rev 07/12/17
+const int FINVAL_CAPTURE_LENGTH = 12000; //rev 07/12/17
+//const int FINVAL_CAPTURE_LENGTH = 24000; //rev 07/12/17
+float aFinalVals[FINVAL_CAPTURE_LENGTH]; //debugging array
+const int SAMPTIMES_CAPTURE_LENGTH = SAMPLES_PER_CYCLE * RUNNING_SUM_LENGTH *3;
+float aSampTimes[SAMPTIMES_CAPTURE_LENGTH];
+long aTimeStamps[FINVAL_CAPTURE_LENGTH]; //added 07/17/17
+long startMicroSec = 0; //added 07/17/17
+
+
 //int aSampleGroupSums_I[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements 
 //int aSampleGroupSums_Q[RUNNING_SUM_LENGTH*SAMPLES_PER_CYCLE];//1280 total, 256 non-zero elements
-//int sample_count = 0; //this counts from 0 to 1279
+int sample_count = 0; //this counts from 0 to 1279
 int finvalidx = 0;
 //elapsedMicros sinceLastSqWvTrans = 0; //06/26/17 added for freq matching with xmit board
-//int num_sample_pulses = 0; //used for square-wave generation
+int num_sample_pulses = 0; //used for square-wave generation
 bool bDoneRecordingFinVals = false;
 
 
@@ -117,6 +123,7 @@ void setup()
 	pinMode(DEMOD_SYNCH_IN_PIN, INPUT_PULLDOWN);
 	pinMode(DEMOD_SYNCH_OUT_PIN, OUTPUT);
 	digitalWrite(DEMOD_SYNCH_OUT_PIN, LOW);
+	digitalWrite(DEMOD_SYNCH_IN_PIN, LOW);
 
 	pinMode(DAC_PIN, OUTPUT); //analog output pin
 
@@ -138,11 +145,25 @@ void setup()
 		aCycleSum_Q[m] = 0;
 	}
 
-	sinceLastSample = 0;
-
+	//init Final Value & Timestamp arrays
+	for (size_t m = 0; m < FINVAL_CAPTURE_LENGTH; m++)
+	{
+		aFinalVals[m] = 0;
+		aTimeStamps[m] = 0;
+	}
 	//07/02/17 for final value analog output
 	analogWriteResolution(12);
 	analogReference(0); //default - 3.3VDC
+
+	//07/16/17 halt here until triggered by sweep gen
+	while (digitalRead(DEMOD_SYNCH_IN_PIN) == LOW)
+	{
+		Serial.println("Waiting for trigger...");
+		delay(1000);
+	}
+	Serial.println("Starting...");
+
+	sinceLastSample = 0;
 
 }
 
@@ -152,9 +173,8 @@ void loop()
 	if (sinceLastSample > USEC_PER_SAMPLE)
 	{
 //DEBUG!!
-
 		//aSampTimes[sample_count] = sinceLastSample;
-		//if (sample_count > SAMPTIMES_CAPTURE_LENGTH-1)
+		//if (sample_count >= SAMPTIMES_CAPTURE_LENGTH)
 		//{
 		//	Serial.print("Sample times capture length exceeded.  Print y/n (y)? ");
 		//	while (Serial.available() == 0); //waits for input
@@ -270,25 +290,24 @@ void loop()
 
 ////DEBUG!!
 			//07/11/17 rev to synch with sweepgen
-			if (digitalRead(DEMOD_SYNCH_IN_PIN) == HIGH && !bDoneRecordingFinVals)
+			//if (digitalRead(DEMOD_SYNCH_IN_PIN) == HIGH && !bDoneRecordingFinVals)
 			{
-				if (finvalidx == 0)
-				{
-					Serial.println("Finval Recording Started");
-					//Serial.print("Cycle\tFinval");
-					digitalWrite(DEMOD_SYNCH_OUT_PIN, HIGH); //handshake with sweepgen
-				}
-
 				if (finvalidx < FINVAL_CAPTURE_LENGTH)
 				{
+					if (finvalidx == 0)
+					{
+						Serial.println("Finval Recording Started");
+						//Serial.print("Cycle\tFinval");
+						digitalWrite(DEMOD_SYNCH_OUT_PIN, HIGH); //handshake with sweepgen
+						startMicroSec = micros();
+					}
+
+				//if (finvalidx < FINVAL_CAPTURE_LENGTH)
+				//{
 					aFinalVals[finvalidx] = FinalVal;
+					aTimeStamps[finvalidx] = micros() - startMicroSec;
 					finvalidx++;
 					float FinalValAnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal / (float)FULLSCALE_FINALVAL_COUNT);
-					//Serial.print(finvalidx);Serial.print(": FinalValAnalogOut = "); Serial.println((int)FinalValAnalogOut);
-					//Serial.print(finvalidx);Serial.print("\t"); Serial.println((int)FinalValAnalogOut);
-					//Serial.print(finvalidx);Serial.print("\t"); 
-					//Serial.print(FinalVal);Serial.print("\t"); 
-					//Serial.println((int)FinalValAnalogOut);
 					analogWrite(DAC_PIN, (int)FinalValAnalogOut); //added 07/11/17
 				}
 				else
@@ -309,13 +328,15 @@ void loop()
 					res.trim();
 					if (!res.equalsIgnoreCase('N'))
 					{
-						Serial.println("Final Values");
+						Serial.println("TStamp\tFinValue");
 						for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
 						{
+							Serial.print(aTimeStamps[i]); Serial.print("\t");
 							Serial.println(aFinalVals[i]);
 						}
 					}
 					Serial.println("Exiting - Bye!!");
+					while (1); //start infinite loop
 				}
 		
 			}
@@ -346,5 +367,19 @@ void loop()
 			//Serial.print(FinalVal);
 			//Serial.println();
 		}//if (RunningSumInsertionIndex >= RUNNING_SUM_LENGTH)
+
+		//07/18/17 - put back in for debugging
+		num_sample_pulses++; //used for square-wave generation
+
+		if (num_sample_pulses == SAMPLES_PER_CYCLE / 2)
+		{
+			digitalWrite(SQWV_OUTPUT_PIN, !digitalRead(SQWV_OUTPUT_PIN));
+			num_sample_pulses = 0;
+		}
+
+		//end of timing pulse
+		digitalWrite(OUTPUT_PIN, LOW);
+
+
 	}//if (sinceLastSample > 95.7)
 }//loop
