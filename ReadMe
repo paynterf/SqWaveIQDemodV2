@@ -1,0 +1,33 @@
+//Program to implement John Jenkins I/Q sq wave demod scheme
+//see his sync_filter_2c.xlsx document
+
+//Purpose (v3):
+//	Produce a running estimate of the magnitude of a square-wave modulated IR
+//	signal in the presence of ambient interferers.  The estimate is computed by 
+//	adding the absolute values of the running sums of the I & Q outputs from a 
+//	digital bandpass filter centered at the square-wave frequency (nominally 520Hz).
+//	The filter is composed of two N-element circular buffers, one for the 
+//	I 'channel' and one for the Q 'channel'. Each element in each circular buffer 
+//	represents one full-cycle sum of the I or Q 'channels' of the sampler.  Each 
+//	full-cycle sum is composed of four 1/4 cycle groups of samples (nominally 5 
+//	samples/group), where each group is first summed and then multiplied by the 
+//	appropriate sign to form the I and Q 'channels'.  The output is updated once 
+//	per input cycle, i.e. approximately once every 2000 uSec.  The size of the 
+//	nominally 64 cycle circular determines the bandwidth of the filter.
+
+//Plan:
+//	Step1: Collect a 1/4 cycle group of samples and sum them into a single value
+//	Step2: Assign the appropriate multiplier to form I & Q channel values, and
+//		   add the result to the current cycle sum I & Q variables respectively
+//	Step3: After 4 such groups have been collected and processed into full-cycle
+//		   I & Q sums, add them to their respective N-cycle running totals
+//	Step4: Subtract the oldest cycle sums from their respective N-cycle totals, and
+//		   then overwrite these values with the new ones
+//	Step5: Compute the final demodulate sensor value by summing the absolute values
+//		   of the I & Q running sums.
+//	Step6: Update buffer indicies so that they point to the new 'oldest value' for 
+//		   the next cycle
+//Notes:
+//	step 1 is done each acquisition period
+//	step 2 is done each SAMPLES_PER_GROUP acquisition periods
+//	step 3-6 are done each SAMPLES_PER_CYCLE acquisition periods
