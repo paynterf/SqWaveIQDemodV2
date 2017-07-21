@@ -41,10 +41,12 @@ ADC *adc = new ADC(); // adc object;
 
 
 #pragma region ProgConsts
-const int OUTPUT_PIN = 32; //lower left pin
-const int SQWV_OUTPUT_PIN = 31; //next to bottom pin, left side
-const int IRDET1_PIN = A0; //aka pin 14
-const int DAC_PIN = A21; //DAC0 added 07/11/17
+const int TIMING_PULSE_OUT_PIN = 32; //lower left pin
+const int TIMING_SQWAVE_OUT_PIN = 31; //up one more
+const int IRDET1_IN_PIN = A0; //aka pin 14
+const int IRDET2_IN_PIN = A1; //aka pin 15
+const int CH1_ANALOG_OUT_PIN = A21; //DAC0 added 07/11/17
+const int CH2_ANALOG_OUT_PIN = A22; //DAC1 added 07/19/17
 
 //07/11/17 added sweep gen synch pins
 const int DEMOD_SYNCH_IN_PIN = 1;
@@ -64,20 +66,33 @@ const int RUNNING_SUM_LENGTH = 64;
 const int SENSOR_PIN = A0;
 const int aMultVal_I[GROUPS_PER_CYCLE] = { 1, 1, -1, -1 };
 const int aMultVal_Q[GROUPS_PER_CYCLE] = { -1, 1, 1, -1 };
-const int FULLSCALE_FINALVAL_COUNT = 2621440; //07/02/17 full-scale final value --> 3.3v DAC output
+const int FULLSCALE_FinalVal1_COUNT = 2621440; //07/02/17 full-scale final value --> 3.3v DAC output
 const float FULLSCALE_DAC_COUNT = 4096; //07/02/17 full-scale final value --> 3.3v DAC output
 #pragma endregion Program Constants
 
 #pragma region ProgVars
-int SampleSum = 0;//sample sum for each channel
-int CycleGroupSum_Q = 0;//cycle sum for each channel, Q component
-int CycleGroupSum_I = 0;//cycle sum for each channel, I component
-int aCycleSum_Q[RUNNING_SUM_LENGTH];//running cycle sums for each channel, Q component
-int aCycleSum_I[RUNNING_SUM_LENGTH];//running cycle sums for each channel, I component
+//Channel 1
+int SampleSum1 = 0;//sample sum for channel1
+int CycleGroupSum1_Q = 0;//cycle sum for channel1, Q component
+int CycleGroupSum1_I = 0;//cycle sum forchannel1, I component
+int aCycleSum1_Q[RUNNING_SUM_LENGTH];//running cycle sums for channel1, Q component
+int aCycleSum1_I[RUNNING_SUM_LENGTH];//running cycle sums for channel1, I component
+int RunningSum1_Q = 0;//overall running sum for channel1, Q component
+int RunningSum1_I = 0;//overall running sum for channel1, I component
+int FinalVal1 = 0;//final value = abs(I)+abs(Q) for channel1
+
+//Channel 2
+int SampleSum2 = 0;//sample sum for channel2
+int CycleGroupSum2_Q = 0;//cycle sum for channel2, Q component
+int CycleGroupSum2_I = 0;//cycle sum forchannel2, I component
+int aCycleSum2_Q[RUNNING_SUM_LENGTH];//running cycle sums for channel2, Q component
+int aCycleSum2_I[RUNNING_SUM_LENGTH];//running cycle sums for channel2, I component
+int RunningSum2_Q = 0;//overall running sum for channel1, Q component
+int RunningSum2_I = 0;//overall running sum for channel1, I component
+int FinalVal2 = 0;//final value = abs(I)+abs(Q) for channel2
+
+//common to both channels
 int RunningSumInsertionIndex = 0;
-int RunningSum_Q = 0;//overall running sum for each channel, Q component
-int RunningSum_I = 0;//overall running sum for each channel, I component
-int FinalVal = 0;//final value = abs(I)+abs(Q) for each channel
 elapsedMicros sinceLastSample;
 int SampleSumCount; //sample sums taken so far. range is 0-4
 int CycleGroupSumCount; //cycle group sums taken so far. range is 0-3
@@ -88,7 +103,8 @@ int CycleGroupSumCount; //cycle group sums taken so far. range is 0-3
 #pragma region DebugVars
 //const int FINVAL_CAPTURE_LENGTH = 6000; //rev 07/12/17
 const int FINVAL_CAPTURE_LENGTH = 12000; //rev 07/12/17
-float aFinalVals[FINVAL_CAPTURE_LENGTH]; //debugging array
+float aFinalVals1[FINVAL_CAPTURE_LENGTH]; //debugging array for Ch1
+float aFinalVals2[FINVAL_CAPTURE_LENGTH]; //debugging array for Ch2
 const int SAMPTIMES_CAPTURE_LENGTH = SAMPLES_PER_CYCLE * RUNNING_SUM_LENGTH *3;
 float aSampTimes[SAMPTIMES_CAPTURE_LENGTH];
 long aTimeStamps[FINVAL_CAPTURE_LENGTH]; //added 07/17/17
@@ -103,10 +119,11 @@ bool bDoneRecordingFinVals = false;
 void setup()
 {
 	Serial.begin(115200);
-	pinMode(OUTPUT_PIN, OUTPUT);
-	pinMode(SQWV_OUTPUT_PIN, OUTPUT); //added 06/26/17 for frequency matching with xmit board
-	pinMode(IRDET1_PIN, INPUT);
-	digitalWrite(OUTPUT_PIN, LOW);
+	pinMode(TIMING_PULSE_OUT_PIN, OUTPUT);
+	pinMode(TIMING_SQWAVE_OUT_PIN, OUTPUT); //added 06/26/17 for frequency matching with xmit board
+	pinMode(IRDET1_IN_PIN, INPUT);
+	pinMode(IRDET2_IN_PIN, INPUT);
+	digitalWrite(TIMING_PULSE_OUT_PIN, LOW);
 
 	//07/11/17 added sweep gen synch pins
 	pinMode(DEMOD_SYNCH_IN_PIN, INPUT_PULLDOWN);
@@ -114,7 +131,7 @@ void setup()
 	digitalWrite(DEMOD_SYNCH_OUT_PIN, LOW);
 	digitalWrite(DEMOD_SYNCH_IN_PIN, LOW);
 
-	pinMode(DAC_PIN, OUTPUT); //analog output pin
+	pinMode(CH1_ANALOG_OUT_PIN, OUTPUT); //analog output pin
 
 //DEBUG!!
 	Serial.print("USEC_PER_SAMPLE = "); Serial.println(USEC_PER_SAMPLE);
@@ -130,14 +147,20 @@ void setup()
 	//init aCycleSum I & Q arrays
 	for (size_t m = 0; m < RUNNING_SUM_LENGTH; m++)
 	{
-		aCycleSum_I[m] = 0;
-		aCycleSum_Q[m] = 0;
+		//Channel 1
+		aCycleSum1_I[m] = 0;
+		aCycleSum1_Q[m] = 0;
+
+		//Channel 2
+		aCycleSum2_I[m] = 0;
+		aCycleSum2_Q[m] = 0;
 	}
 
 	//init Final Value & Timestamp arrays
 	for (size_t m = 0; m < FINVAL_CAPTURE_LENGTH; m++)
 	{
-		aFinalVals[m] = 0;
+		aFinalVals1[m] = 0;
+		aFinalVals2[m] = 0;
 		aTimeStamps[m] = 0;
 	}
 	//07/02/17 for final value analog output
@@ -163,12 +186,14 @@ void loop()
 		sinceLastSample -= USEC_PER_SAMPLE;
 
 		//start of timing pulse
-		digitalWrite(OUTPUT_PIN, HIGH);
+		digitalWrite(TIMING_PULSE_OUT_PIN, HIGH);
 
 		//	Step1: Collect a 1/4 cycle group of samples and sum them into a single value
 		// this section executes each USEC_PER_SAMPLE period
-		int samp = adc->analogRead(SENSOR_PIN);
-		SampleSum += samp;
+		int samp1 = adc->analogRead(IRDET1_IN_PIN);
+		int samp2 = adc->analogRead(IRDET2_IN_PIN);
+		SampleSum1 += samp1;
+		SampleSum2 += samp2;
 		SampleSumCount++; //goes from 0 to SAMPLES_PER_GROUP-1
 
 		//	Step2: Every 5th acquisition cycle, assign the appropriate multiplier to form I & Q channel values, and
@@ -179,14 +204,21 @@ void loop()
 
 			//compute new group sum.  Sign depends on which quarter cycle the sample group is from 
 			//CycleGroupSumCount ranges from 0 to 3
-			int groupsum_I = SampleSum * aMultVal_I[CycleGroupSumCount];
-			int groupsum_Q = SampleSum * aMultVal_Q[CycleGroupSumCount];
-			SampleSum = 0;
 
-			//Serial.print(groupsum_I); Serial.print("\t"); Serial.println(groupsum_Q);
+			//Ch1
+			int groupsum1_I = SampleSum1 * aMultVal_I[CycleGroupSumCount];
+			int groupsum1_Q = SampleSum1 * aMultVal_Q[CycleGroupSumCount];
+			CycleGroupSum1_I += groupsum1_I; //add new I comp to cycle sum
+			CycleGroupSum1_Q += groupsum1_Q; //add new Q comp to cycle sum
 
-			CycleGroupSum_I += groupsum_I; //add new I comp to cycle sum
-			CycleGroupSum_Q += groupsum_Q; //add new Q comp to cycle sum
+			//Ch2
+			int groupsum2_I = SampleSum1 * aMultVal_I[CycleGroupSumCount];
+			int groupsum2_Q = SampleSum1 * aMultVal_Q[CycleGroupSumCount];
+			CycleGroupSum2_I += groupsum2_I; //add new I comp to cycle sum
+			CycleGroupSum2_Q += groupsum2_Q; //add new Q comp to cycle sum
+
+			//common
+			SampleSum1 = 0;
 			CycleGroupSumCount++;
 		}//if(SampleSumCount == SAMPLES_PER_GROUP)
 
@@ -198,15 +230,25 @@ void loop()
 
 			//	Step4: Subtract the oldest cycle sum from the N-cycle total, and
 			//		   then overwrite this values with the new one
-			int oldestvalue_I = aCycleSum_I[RunningSumInsertionIndex];
-			int oldestvalue_Q = aCycleSum_Q[RunningSumInsertionIndex];
-			RunningSum_I = RunningSum_I + CycleGroupSum_I - oldestvalue_I;
-			RunningSum_Q = RunningSum_Q + CycleGroupSum_Q - oldestvalue_Q;
+
+			//Ch1
+			int oldestvalue1_I = aCycleSum1_I[RunningSumInsertionIndex];
+			int oldestvalue1_Q = aCycleSum1_Q[RunningSumInsertionIndex];
+			RunningSum1_I = RunningSum1_I + CycleGroupSum1_I - oldestvalue1_I;
+			RunningSum1_Q = RunningSum1_Q + CycleGroupSum1_Q - oldestvalue1_Q;
+
+			//Ch2
+			int oldestvalue2_I = aCycleSum2_I[RunningSumInsertionIndex];
+			int oldestvalue2_Q = aCycleSum2_Q[RunningSumInsertionIndex];
+			RunningSum2_I = RunningSum2_I + CycleGroupSum2_I - oldestvalue2_I;
+			RunningSum2_Q = RunningSum2_Q + CycleGroupSum2_Q - oldestvalue2_Q;
 
 			//	Step5: Compute the final demodulate sensor value by summing the absolute values
 			//		   of the I & Q running sums
-			int RS_I = RunningSum_I; int RS_Q = RunningSum_Q;
-			FinalVal = abs((int)RS_I) + abs((int)RS_Q);
+			int RS1_I = RunningSum1_I; int RS1_Q = RunningSum1_Q;
+			FinalVal1 = abs((int)RS1_I) + abs((int)RS1_Q);
+			int RS2_I = RunningSum2_I; int RS2_Q = RunningSum2_Q;
+			FinalVal1 = abs((int)RS2_I) + abs((int)RS2_Q);
 
 //DEBUG!!
 			//07/11/17 rev to synch with sweepgen
@@ -220,11 +262,12 @@ void loop()
 				}
 
 				//capture final value & timestamp
-				aFinalVals[finvalidx] = FinalVal;
+				aFinalVals1[finvalidx] = FinalVal1;
+				aFinalVals2[finvalidx] = FinalVal2;
 				aTimeStamps[finvalidx] = micros() - startMicroSec;
 				finvalidx++;
-				float FinalValAnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal / (float)FULLSCALE_FINALVAL_COUNT);
-				analogWrite(DAC_PIN, (int)FinalValAnalogOut); //added 07/11/17
+				float FinalVal1AnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal1 / (float)FULLSCALE_FinalVal1_COUNT);
+				analogWrite(CH1_ANALOG_OUT_PIN, (int)FinalVal1AnalogOut); //added 07/11/17
 			}
 			else
 			{
@@ -245,11 +288,14 @@ void loop()
 				res.trim();
 				if (!res.equalsIgnoreCase('N'))
 				{
-					Serial.println("TStamp\tFinValue");
+					Serial.println("TStamp\tFinValue1\tFinValue2");
 					for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
 					{
-						Serial.print(aTimeStamps[i]); Serial.print("\t");
-						Serial.println(aFinalVals[i]);
+						Serial.print(aTimeStamps[i]); 
+						Serial.print("\t");
+						Serial.print(aFinalVals1[i]);
+						Serial.print("\t");
+						Serial.println(aFinalVals2[i]);
 					}
 				}
 				Serial.println("Exiting - Bye!!");
@@ -257,12 +303,16 @@ void loop()
 			}
 //DEBUG!!
 
-			aCycleSum_I[RunningSumInsertionIndex] = CycleGroupSum_I;
-			aCycleSum_Q[RunningSumInsertionIndex] = CycleGroupSum_Q;
+			aCycleSum1_I[RunningSumInsertionIndex] = CycleGroupSum1_I;
+			aCycleSum1_Q[RunningSumInsertionIndex] = CycleGroupSum1_Q;
+			aCycleSum2_I[RunningSumInsertionIndex] = CycleGroupSum2_I;
+			aCycleSum2_Q[RunningSumInsertionIndex] = CycleGroupSum2_Q;
 
 			//reset cycle group sum values for next group
-			CycleGroupSum_I = 0;
-			CycleGroupSum_Q = 0;
+			CycleGroupSum1_I = 0;
+			CycleGroupSum1_Q = 0;
+			CycleGroupSum2_I = 0;
+			CycleGroupSum2_Q = 0;
 
 			////	Step6: Update buffer indicies so that they point to the new 'oldest value' for 
 			////		   the next cycle
@@ -280,12 +330,12 @@ void loop()
 
 		if (num_sample_pulses == SAMPLES_PER_CYCLE / 2)
 		{
-			digitalWrite(SQWV_OUTPUT_PIN, !digitalRead(SQWV_OUTPUT_PIN));
+			digitalWrite(TIMING_SQWAVE_OUT_PIN, !digitalRead(TIMING_SQWAVE_OUT_PIN));
 			num_sample_pulses = 0;
 		}
 
 		//end of timing pulse
-		digitalWrite(OUTPUT_PIN, LOW);
+		digitalWrite(TIMING_PULSE_OUT_PIN, LOW);
 
 	}//if (sinceLastSample > 95.7)
 }//loop
