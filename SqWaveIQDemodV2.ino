@@ -62,11 +62,10 @@ const int GROUPS_PER_CYCLE = 4;
 const int SAMPLES_PER_GROUP = SAMPLES_PER_CYCLE / GROUPS_PER_CYCLE;
 const float USEC_PER_SAMPLE = SQWV_PERIOD_US / SAMPLES_PER_CYCLE; //sample period, Usec
 const int RUNNING_SUM_LENGTH = 64;
-//const int RUNNING_SUM_LENGTH = 32; //07/15/17
 const int SENSOR_PIN = A0;
 const int aMultVal_I[GROUPS_PER_CYCLE] = { 1, 1, -1, -1 };
 const int aMultVal_Q[GROUPS_PER_CYCLE] = { -1, 1, 1, -1 };
-const int FULLSCALE_FinalVal1_COUNT = 2621440; //07/02/17 full-scale final value --> 3.3v DAC output
+const int FULLSCALE_FinalVal_COUNT = 2621440; //07/02/17 full-scale final value --> 3.3v DAC output
 const float FULLSCALE_DAC_COUNT = 4096; //07/02/17 full-scale final value --> 3.3v DAC output
 #pragma endregion Program Constants
 
@@ -102,12 +101,12 @@ int CycleGroupSumCount; //cycle group sums taken so far. range is 0-3
 //debugging variables
 #pragma region DebugVars
 //const int FINVAL_CAPTURE_LENGTH = 6000; //rev 07/12/17
-const int FINVAL_CAPTURE_LENGTH = 12000; //rev 07/12/17
-float aFinalVals1[FINVAL_CAPTURE_LENGTH]; //debugging array for Ch1
-float aFinalVals2[FINVAL_CAPTURE_LENGTH]; //debugging array for Ch2
-const int SAMPTIMES_CAPTURE_LENGTH = SAMPLES_PER_CYCLE * RUNNING_SUM_LENGTH *3;
-float aSampTimes[SAMPTIMES_CAPTURE_LENGTH];
-long aTimeStamps[FINVAL_CAPTURE_LENGTH]; //added 07/17/17
+//const int FINVAL_CAPTURE_LENGTH = 12000; //rev 07/12/17
+//float aFinalVals1[FINVAL_CAPTURE_LENGTH]; //debugging array for Ch1
+//float aFinalVals2[FINVAL_CAPTURE_LENGTH]; //debugging array for Ch2
+//const int SAMPTIMES_CAPTURE_LENGTH = SAMPLES_PER_CYCLE * RUNNING_SUM_LENGTH *3;
+//float aSampTimes[SAMPTIMES_CAPTURE_LENGTH];
+//long aTimeStamps[FINVAL_CAPTURE_LENGTH]; //added 07/17/17
 long startMicroSec = 0; //added 07/17/17
 int sample_count = 0; //this counts from 0 to 1279
 int finvalidx = 0;
@@ -132,17 +131,25 @@ void setup()
 	digitalWrite(DEMOD_SYNCH_IN_PIN, LOW);
 
 	pinMode(CH1_ANALOG_OUT_PIN, OUTPUT); //analog output pin
+	pinMode(CH2_ANALOG_OUT_PIN, OUTPUT); //analog output pin
 
 //DEBUG!!
 	Serial.print("USEC_PER_SAMPLE = "); Serial.println(USEC_PER_SAMPLE);
 	Serial.print("SQWV_PERIOD_US = "); Serial.println(SQWV_PERIOD_US);
 
-	//decreases conversion time from ~15 to ~5uSec
-	adc->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED);
-	adc->setSamplingSpeed(ADC_SAMPLING_SPEED::HIGH_SPEED);
-	adc->setResolution(12);
-	adc->setAveraging(1);
+	//Initialize both ADC's
 
+	//ADC_0
+	adc->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED, ADC_0);
+	adc->setSamplingSpeed(ADC_SAMPLING_SPEED::HIGH_SPEED, ADC_0);
+	adc->setResolution(12, ADC_0);
+	adc->setAveraging(1, ADC_0);
+
+	//ADC_1
+	adc->setConversionSpeed(ADC_CONVERSION_SPEED::HIGH_SPEED, ADC_1);
+	adc->setSamplingSpeed(ADC_SAMPLING_SPEED::HIGH_SPEED, ADC_1);
+	adc->setResolution(12, ADC_1);
+	adc->setAveraging(1, ADC_1);
 
 	//init aCycleSum I & Q arrays
 	for (size_t m = 0; m < RUNNING_SUM_LENGTH; m++)
@@ -156,13 +163,14 @@ void setup()
 		aCycleSum2_Q[m] = 0;
 	}
 
-	//init Final Value & Timestamp arrays
-	for (size_t m = 0; m < FINVAL_CAPTURE_LENGTH; m++)
-	{
-		aFinalVals1[m] = 0;
-		aFinalVals2[m] = 0;
-		aTimeStamps[m] = 0;
-	}
+	////init Final Value & Timestamp arrays
+	//for (size_t m = 0; m < FINVAL_CAPTURE_LENGTH; m++)
+	//{
+	//	aFinalVals1[m] = 0;
+	//	aFinalVals2[m] = 0;
+	//	aTimeStamps[m] = 0;
+	//}
+
 	//07/02/17 for final value analog output
 	analogWriteResolution(12);
 	analogReference(0); //default - 3.3VDC
@@ -183,6 +191,11 @@ void loop()
 	//this runs every 95.7uSec
 	if (sinceLastSample > USEC_PER_SAMPLE)
 	{
+		//if (sample_count < SAMPTIMES_CAPTURE_LENGTH)
+		//{
+		//	aSampTimes[sample_count] = sinceLastSample;
+		//}
+		//sample_count++;
 		sinceLastSample -= USEC_PER_SAMPLE;
 
 		//start of timing pulse
@@ -192,8 +205,10 @@ void loop()
 		// this section executes each USEC_PER_SAMPLE period
 		int samp1 = adc->analogRead(IRDET1_IN_PIN);
 		int samp2 = adc->analogRead(IRDET2_IN_PIN);
+
 		SampleSum1 += samp1;
 		SampleSum2 += samp2;
+
 		SampleSumCount++; //goes from 0 to SAMPLES_PER_GROUP-1
 
 		//	Step2: Every 5th acquisition cycle, assign the appropriate multiplier to form I & Q channel values, and
@@ -212,13 +227,14 @@ void loop()
 			CycleGroupSum1_Q += groupsum1_Q; //add new Q comp to cycle sum
 
 			//Ch2
-			int groupsum2_I = SampleSum1 * aMultVal_I[CycleGroupSumCount];
-			int groupsum2_Q = SampleSum1 * aMultVal_Q[CycleGroupSumCount];
+			int groupsum2_I = SampleSum2 * aMultVal_I[CycleGroupSumCount];
+			int groupsum2_Q = SampleSum2 * aMultVal_Q[CycleGroupSumCount];
 			CycleGroupSum2_I += groupsum2_I; //add new I comp to cycle sum
 			CycleGroupSum2_Q += groupsum2_Q; //add new Q comp to cycle sum
 
 			//common
 			SampleSum1 = 0;
+			SampleSum2 = 0;
 			CycleGroupSumCount++;
 		}//if(SampleSumCount == SAMPLES_PER_GROUP)
 
@@ -245,62 +261,86 @@ void loop()
 
 			//	Step5: Compute the final demodulate sensor value by summing the absolute values
 			//		   of the I & Q running sums
+
+			//ch1
 			int RS1_I = RunningSum1_I; int RS1_Q = RunningSum1_Q;
 			FinalVal1 = abs((int)RS1_I) + abs((int)RS1_Q);
 			int RS2_I = RunningSum2_I; int RS2_Q = RunningSum2_Q;
-			FinalVal1 = abs((int)RS2_I) + abs((int)RS2_Q);
+			FinalVal2 = abs((int)RS2_I) + abs((int)RS2_Q);
+
+			float FinalVal1AnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal1 / (float)FULLSCALE_FinalVal_COUNT);
+			analogWrite(CH1_ANALOG_OUT_PIN, (int)FinalVal1AnalogOut); //added 07/11/17
+
+			float FinalVal2AnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal2 / (float)FULLSCALE_FinalVal_COUNT);
+			analogWrite(CH2_ANALOG_OUT_PIN, (int)FinalVal2AnalogOut); //added 07/11/17
 
 //DEBUG!!
-			//07/11/17 rev to synch with sweepgen
-			if (finvalidx < FINVAL_CAPTURE_LENGTH)
-			{
-				if (finvalidx == 0)
-				{
-					Serial.println("Finval Recording Started");
-					digitalWrite(DEMOD_SYNCH_OUT_PIN, HIGH); //handshake with sweepgen
-					startMicroSec = micros();
-				}
+			////07/11/17 rev to synch with sweepgen
+			//if (finvalidx < FINVAL_CAPTURE_LENGTH)
+			//{
+			//	if (finvalidx == 0)
+			//	{
+			//		Serial.println("Finval Recording Started");
+			//		digitalWrite(DEMOD_SYNCH_OUT_PIN, HIGH); //handshake with sweepgen
+			//		startMicroSec = micros();
+			//	}
 
-				//capture final value & timestamp
-				aFinalVals1[finvalidx] = FinalVal1;
-				aFinalVals2[finvalidx] = FinalVal2;
-				aTimeStamps[finvalidx] = micros() - startMicroSec;
-				finvalidx++;
-				float FinalVal1AnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal1 / (float)FULLSCALE_FinalVal1_COUNT);
-				analogWrite(CH1_ANALOG_OUT_PIN, (int)FinalVal1AnalogOut); //added 07/11/17
-			}
-			else
-			{
-				digitalWrite(DEMOD_SYNCH_OUT_PIN, LOW); //handshake with sweepgen
-				finvalidx = 0;
-				bDoneRecordingFinVals = true;
-				Serial.print("Finval Recording Stopped.  Print y/n (y)? ");
+			//	//capture final value & timestamp
+			//	aFinalVals1[finvalidx] = FinalVal1;
+			//	aFinalVals2[finvalidx] = FinalVal2;
+			//	aTimeStamps[finvalidx] = micros() - startMicroSec;
+			//	finvalidx++;
 
-				//wait for input
-				while (Serial.available() == 0)
-				{
-					Serial.println("Waiting for input...");
-					delay(1000);
-				}
+				//float FinalVal1AnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal1 / (float)FULLSCALE_FinalVal_COUNT);
+				//analogWrite(CH1_ANALOG_OUT_PIN, (int)FinalVal1AnalogOut); //added 07/11/17
 
-				String res = Serial.readString();
-				Serial.println(res.substring(0));
-				res.trim();
-				if (!res.equalsIgnoreCase('N'))
-				{
-					Serial.println("TStamp\tFinValue1\tFinValue2");
-					for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
-					{
-						Serial.print(aTimeStamps[i]); 
-						Serial.print("\t");
-						Serial.print(aFinalVals1[i]);
-						Serial.print("\t");
-						Serial.println(aFinalVals2[i]);
-					}
-				}
-				Serial.println("Exiting - Bye!!");
-				while (1); //start infinite loop
-			}
+				//float FinalVal2AnalogOut = FULLSCALE_DAC_COUNT * ((float)FinalVal2 / (float)FULLSCALE_FinalVal_COUNT);
+				//analogWrite(CH2_ANALOG_OUT_PIN, (int)FinalVal2AnalogOut); //added 07/11/17
+			//}
+			//else
+			//{
+			//	digitalWrite(DEMOD_SYNCH_OUT_PIN, LOW); //handshake with sweepgen
+			//	finvalidx = 0;
+			//	bDoneRecordingFinVals = true;
+			//	Serial.print("Finval Recording Stopped.  Print y/n (y)? ");
+
+			//	//wait for input
+			//	while (Serial.available() == 0)
+			//	{
+			//		Serial.println("Waiting for input...");
+			//		delay(1000);
+			//	}
+
+			//	String res = Serial.readString();
+			//	Serial.println(res.substring(0));
+			//	res.trim();
+			//	if (!res.equalsIgnoreCase('N'))
+			//	{
+			//		Serial.println("TStamp\tFinValue1\tFinValue2");
+			//		for (size_t i = 0; i < FINVAL_CAPTURE_LENGTH; i++)
+			//		{
+			//			if (aFinalVals1[i] > 2000)
+			//			{
+			//				Serial.print(aTimeStamps[i]); 
+			//				Serial.print("\t");
+			//				Serial.print(aFinalVals1[i]);
+			//				Serial.print("\t");
+			//				Serial.println(aFinalVals2[i]);
+			//			}
+			//		}
+
+			//		//Serial.println("SampIdx\tTStamp");
+			//		//for (size_t i = 0; i < SAMPTIMES_CAPTURE_LENGTH; i++)
+			//		//{
+			//		//	Serial.print(i); 
+			//		//	Serial.print("\t");
+			//		//	Serial.print(aSampTimes[i]);
+			//		//	Serial.println();
+			//		//}
+			//	}
+			//	Serial.println("Exiting - Bye!!");
+			//	while (1); //start infinite loop
+			//}
 //DEBUG!!
 
 			aCycleSum1_I[RunningSumInsertionIndex] = CycleGroupSum1_I;
